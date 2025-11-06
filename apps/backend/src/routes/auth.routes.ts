@@ -1,14 +1,15 @@
 // apps/backend/src/routes/auth.routes.ts
 import express, { Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcryptjs';
-import { googleSheetsService } from '../services/googleSheets.service';
+import jwt, { SignOptions } from 'jsonwebtoken';
+import { GoogleSheetsService } from '../services/googleSheets.service';
 
 const router = express.Router();
+const sheetsService = new GoogleSheetsService();
 
 interface LoginRequest {
   email: string;
   password: string;
+  role: 'student' | 'teacher';
 }
 
 interface TokenPayload {
@@ -19,37 +20,53 @@ interface TokenPayload {
 
 // Generate access token
 const generateAccessToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, process.env.JWT_SECRET!, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '15m'
-  });
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not defined');
+  }
+  
+  return jwt.sign(payload, secret as jwt.Secret, {
+    expiresIn: process.env.JWT_EXPIRES_IN ?? '15m'
+  } as jwt.SignOptions);
 };
 
 // Generate refresh token
 const generateRefreshToken = (payload: TokenPayload): string => {
-  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET!, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d'
-  });
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    throw new Error('JWT_REFRESH_SECRET is not defined');
+  }
+  
+  return jwt.sign(payload, secret as jwt.Secret, {
+    expiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d'
+  } as jwt.SignOptions);
 };
 
 // POST /api/auth/login
 router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
+    if (!email || !password || !role) {
+      return res.status(400).json({ error: 'Email, password, and role are required' });
     }
 
-    // Find user in Google Sheets
-    const students = await googleSheetsService.getStudents();
-    const user = students.find((s: any) => s.email.toLowerCase() === email.toLowerCase());
+    // Find user based on role
+    let user;
+    if (role === 'student') {
+      user = await sheetsService.getStudentByEmail(email);
+    } else {
+      user = await sheetsService.getTeacherByEmail(email);
+    }
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Verify password (in production, use hashed passwords)
-    if (user.password !== password) {
+    // Verify password
+    const isPasswordValid = await sheetsService.verifyPassword(password, user.passwordHash);
+
+    if (!isPasswordValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -57,12 +74,23 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
     const tokenPayload: TokenPayload = {
       userId: user.id || user.email,
       email: user.email,
-      role: user.role || 'student'
+      role: role
     };
 
     // Generate tokens
     const accessToken = generateAccessToken(tokenPayload);
     const refreshToken = generateRefreshToken(tokenPayload);
+
+    // Store refresh token
+    await sheetsService.storeRefreshToken(tokenPayload.userId, refreshToken);
+
+    // Log the login activity
+    await sheetsService.logActivity(
+      'Login',
+      tokenPayload.userId,
+      `${role} logged in`,
+      email
+    );
 
     // Return tokens and user info
     res.json({
@@ -72,7 +100,7 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
         id: tokenPayload.userId,
         email: user.email,
         name: user.name,
-        role: tokenPayload.role
+        role: role
       }
     });
 
@@ -91,8 +119,20 @@ router.post('/refresh', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Refresh token is required' });
     }
 
+    const secret = process.env.JWT_REFRESH_SECRET;
+    if (!secret) {
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
     // Verify refresh token
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET!) as TokenPayload;
+    const decoded = jwt.verify(refreshToken, secret) as TokenPayload;
+
+    // Verify refresh token is stored
+    const isValid = await sheetsService.verifyRefreshToken(decoded.userId, refreshToken);
+
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
 
     // Generate new tokens
     const tokenPayload: TokenPayload = {
@@ -103,6 +143,9 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
     const newAccessToken = generateAccessToken(tokenPayload);
     const newRefreshToken = generateRefreshToken(tokenPayload);
+
+    // Store new refresh token
+    await sheetsService.storeRefreshToken(decoded.userId, newRefreshToken);
 
     res.json({
       accessToken: newAccessToken,
@@ -120,8 +163,27 @@ router.post('/refresh', async (req: Request, res: Response) => {
 
 // POST /api/auth/logout
 router.post('/logout', async (req: Request, res: Response) => {
-  // In a production app, you might want to blacklist the token
-  res.json({ message: 'Logged out successfully' });
+  try {
+    const { userId } = req.body;
+
+    if (userId) {
+      // Remove refresh token
+      await sheetsService.removeRefreshToken(userId);
+      
+      // Log the logout activity
+      await sheetsService.logActivity(
+        'Logout',
+        userId,
+        'User logged out',
+        ''
+      );
+    }
+
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 export default router;

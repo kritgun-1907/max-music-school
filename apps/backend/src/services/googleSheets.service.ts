@@ -53,10 +53,11 @@ const LogEntrySchema = z.object({
 });
 
 export class GoogleSheetsService {
-  private sheets: sheets_v4.Sheets;
-  private auth: JWT;
-  private redisClient: Redis.RedisClientType;
+  private sheets!: sheets_v4.Sheets; // Use definite assignment assertion
+  private auth!: JWT;
+  private redisClient!: Redis.RedisClientType;
   private spreadsheetId: string;
+  private isInitialized: boolean = false;
   
   // Sheet ranges based on your structure
   private readonly SHEETS = {
@@ -67,8 +68,15 @@ export class GoogleSheetsService {
 
   constructor() {
     this.spreadsheetId = process.env.GOOGLE_SHEET_ID!;
-    this.initializeAuth();
-    this.initializeRedis();
+    this.initialize(); // Call async init without await (fire and forget)
+  }
+
+  private async initialize() {
+    await Promise.all([
+      this.initializeAuth(),
+      this.initializeRedis()
+    ]);
+    this.isInitialized = true;
   }
 
   private async initializeAuth() {
@@ -93,10 +101,19 @@ export class GoogleSheetsService {
     });
   }
 
+  private async ensureInitialized() {
+    // Wait for initialization if not done
+    if (!this.isInitialized) {
+      await this.initialize();
+    }
+  }
+
   // ==================== STUDENT OPERATIONS ====================
 
   async getStudentByEmail(email: string): Promise<any | null> {
     try {
+      await this.ensureInitialized();
+      
       // Check cache first
       const cacheKey = `student:email:${email}`;
       const cached = await this.redisClient.get(cacheKey);
@@ -136,6 +153,8 @@ export class GoogleSheetsService {
 
   async getStudentById(studentId: string): Promise<any | null> {
     try {
+      await this.ensureInitialized();
+      
       const cacheKey = `student:${studentId}`;
       const cached = await this.redisClient.get(cacheKey);
       
@@ -200,6 +219,8 @@ export class GoogleSheetsService {
 
   async updateStudentData(studentId: string, updates: Partial<any>): Promise<any> {
     try {
+      await this.ensureInitialized();
+      
       // Find the row index
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -266,10 +287,150 @@ export class GoogleSheetsService {
     }
   }
 
+  // ==================== NEW METHODS FOR TEACHER ROUTES ====================
+
+  /**
+   * Add a new student row to the Students sheet
+   */
+  public async addStudentRow(rowData: any[]): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Students!A:X',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [rowData]
+        }
+      });
+      
+      // Clear cache for students list
+      await this.redisClient.del('students:all');
+    } catch (error) {
+      console.error('Error adding student row:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get attendance logs filtered by batch name
+   */
+  public async getAttendanceLogs(
+    batchName: string, 
+    month?: string, 
+    year?: string
+  ): Promise<any[]> {
+    try {
+      await this.ensureInitialized();
+      
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Logs!A:E'
+      });
+      
+      const rows = response.data.values || [];
+      const attendanceLogs = rows
+        .filter((row, index) => {
+          if (index === 0) return false; // Skip header
+          
+          let matches = row[1] === 'Attendance' && row[3]?.includes(batchName);
+          
+          // Additional filtering by month/year if provided
+          if (matches && month && year) {
+            const timestamp = new Date(row[0]);
+            matches = timestamp.getMonth() + 1 === parseInt(month) &&
+                     timestamp.getFullYear() === parseInt(year);
+          }
+          
+          return matches;
+        })
+        .map(log => ({
+          timestamp: log[0],
+          action: log[1],
+          studentId: log[2],
+          status: log[3],
+          date: log[4]
+        }));
+      
+      return attendanceLogs;
+    } catch (error) {
+      console.error('Error fetching attendance logs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all pending change requests from the Logs sheet
+   */
+  public async getChangeRequests(): Promise<any[]> {
+    try {
+      await this.ensureInitialized();
+      
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Logs!A:E'
+      });
+      
+      const rows = response.data.values || [];
+      const requests = rows
+        .filter((row, index) => {
+          if (index === 0) return false; // Skip header
+          return row[1] === 'Change Request';
+        })
+        .map(row => ({
+          timestamp: row[0],
+          action: row[1],
+          studentId: row[2],
+          requestType: row[3],
+          reason: row[4]
+        }));
+      
+      return requests;
+    } catch (error) {
+      console.error('Error fetching change requests:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Log an activity to the Logs sheet
+   */
+  public async logActivity(
+    action: string, 
+    userId: string, 
+    details: string, 
+    extra: string
+  ): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      
+      await this.sheets.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Logs!A:E',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [[
+            new Date().toISOString(),
+            action,
+            userId,
+            details,
+            extra
+          ]]
+        }
+      });
+    } catch (error) {
+      console.error('Error logging activity:', error);
+      throw error;
+    }
+  }
+
   // ==================== TEACHER OPERATIONS ====================
 
   async getTeacherByEmail(email: string): Promise<any | null> {
     try {
+      await this.ensureInitialized();
+      
       const cacheKey = `teacher:email:${email}`;
       const cached = await this.redisClient.get(cacheKey);
       
@@ -337,6 +498,8 @@ export class GoogleSheetsService {
 
   async getStudentBatches(studentId: string): Promise<any[]> {
     try {
+      await this.ensureInitialized();
+      
       const student = await this.getStudentById(studentId);
       if (!student) return [];
 
@@ -365,6 +528,8 @@ export class GoogleSheetsService {
 
   async getTeacherBatches(teacherName: string): Promise<any[]> {
     try {
+      await this.ensureInitialized();
+      
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: `${this.SHEETS.STUDENTS}!A:Z`
@@ -417,14 +582,20 @@ export class GoogleSheetsService {
 
   // ==================== ATTENDANCE OPERATIONS ====================
 
-  async markAttendance(batchName: string, date: string, attendanceData: Array<{studentId: string, status: 'present' | 'absent'}>): Promise<void> {
+  async markAttendance(
+    batchName: string, 
+    date: string, 
+    attendanceData: Array<{studentId: string; name: string; status: 'present' | 'absent'}>
+  ): Promise<void> {
     try {
+      await this.ensureInitialized();
+      
       // Log attendance in the Logs sheet
-      const logEntries = attendanceData.map(({ studentId, status }) => [
+      const logEntries = attendanceData.map(({ studentId, name, status }) => [
         new Date().toISOString(),
         'Attendance',
         studentId,
-        `${status.toUpperCase()} - ${batchName}`,
+        `${name} - ${status.toUpperCase()} in ${batchName}`,
         date
       ]);
 
@@ -462,6 +633,8 @@ export class GoogleSheetsService {
 
   async getStudentAttendance(studentId: string, month?: number, year?: number): Promise<any> {
     try {
+      await this.ensureInitialized();
+      
       const student = await this.getStudentById(studentId);
       if (!student) return null;
 
@@ -503,6 +676,8 @@ export class GoogleSheetsService {
     reason?: string
   }): Promise<any> {
     try {
+      await this.ensureInitialized();
+      
       const requestId = `REQ${Date.now()}`;
       const timestamp = new Date().toISOString();
       
@@ -538,6 +713,8 @@ export class GoogleSheetsService {
 
   async getStudentDashboardData(studentId: string): Promise<any> {
     try {
+      await this.ensureInitialized();
+      
       const student = await this.getStudentById(studentId);
       if (!student) return null;
 
@@ -581,13 +758,17 @@ export class GoogleSheetsService {
 
   async getTeacherDashboardData(teacherEmail: string): Promise<any> {
     try {
+      await this.ensureInitialized();
+      
       const teacher = await this.getTeacherByEmail(teacherEmail);
       if (!teacher) return null;
 
       const batches = await this.getTeacherBatches(teacher.name);
       
-      // Calculate total students
-      const totalStudents = batches.reduce((sum, batch) => sum + batch.students.length, 0);
+      // Calculate total students - Fixed type annotation
+      const totalStudents = batches.reduce((sum: number, batch: any) => 
+        sum + batch.students.length, 0
+      );
       
       return {
         profile: {
@@ -600,8 +781,8 @@ export class GoogleSheetsService {
         statistics: {
           totalBatches: batches.length,
           totalStudents: totalStudents,
-          activeStudents: batches.reduce((sum, batch) => 
-            sum + batch.students.filter(s => s.status === 'Active').length, 0
+          activeStudents: batches.reduce((sum: number, batch: any) => 
+            sum + batch.students.filter((s: any) => s.status === 'Active').length, 0
           )
         },
         batches: batches,
@@ -658,16 +839,19 @@ export class GoogleSheetsService {
   private refreshTokens = new Map<string, string>();
 
   async storeRefreshToken(userId: string, token: string): Promise<void> {
+    await this.ensureInitialized();
     this.refreshTokens.set(userId, token);
     await this.redisClient.setEx(`refresh_token:${userId}`, 604800, token); // 7 days
   }
 
   async verifyRefreshToken(userId: string, token: string): Promise<boolean> {
+    await this.ensureInitialized();
     const storedToken = await this.redisClient.get(`refresh_token:${userId}`);
     return storedToken === token;
   }
 
   async removeRefreshToken(userId: string): Promise<void> {
+    await this.ensureInitialized();
     this.refreshTokens.delete(userId);
     await this.redisClient.del(`refresh_token:${userId}`);
   }
@@ -675,6 +859,8 @@ export class GoogleSheetsService {
   // ==================== CLEANUP ====================
 
   async disconnect(): Promise<void> {
-    await this.redisClient.quit();
+    if (this.redisClient) {
+      await this.redisClient.quit();
+    }
   }
 }

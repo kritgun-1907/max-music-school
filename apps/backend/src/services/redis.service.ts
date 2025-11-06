@@ -11,10 +11,10 @@ class RedisService {
     }
 
     try {
-      this.client = createClient({
+      const redisConfig: any = {
         url: process.env.REDIS_URL || 'redis://localhost:6379',
         socket: {
-          reconnectStrategy: (retries) => {
+          reconnectStrategy: (retries: number) => {
             if (retries > 10) {
               console.error('Redis: Too many retries, giving up');
               return new Error('Redis connection failed');
@@ -22,7 +22,14 @@ class RedisService {
             return retries * 100;
           }
         }
-      });
+      };
+
+      // Add password if provided
+      if (process.env.REDIS_PASSWORD) {
+        redisConfig.password = process.env.REDIS_PASSWORD;
+      }
+
+      this.client = createClient(redisConfig);
 
       this.client.on('error', (err) => {
         console.error('Redis Client Error:', err);
@@ -30,7 +37,7 @@ class RedisService {
       });
 
       this.client.on('connect', () => {
-        console.log('✅ Redis connected');
+        console.log('✅ Redis connected with authentication');
         this.isConnected = true;
       });
 

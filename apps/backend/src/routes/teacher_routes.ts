@@ -1,6 +1,6 @@
 // apps/backend/src/routes/teacher.routes.ts
-import { Router } from 'express';
-import { authenticate, authorize, validateRequest } from '../middleware/auth.middleware';
+import { Router, Response } from 'express';
+import { authenticate, authorize, AuthRequest } from './../middleware/auth_middleware';
 import { GoogleSheetsService } from '../services/googleSheets.service';
 import { z } from 'zod';
 
@@ -40,9 +40,27 @@ const AddStudentSchema = z.object({
   paidAmount: z.number()
 });
 
+// Validation middleware wrapper
+const validateRequest = (schema: z.ZodSchema) => {
+  return (req: AuthRequest, res: Response, next: Function) => {
+    try {
+      schema.parse(req.body);
+      next();
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: 'Validation failed', 
+          details: error.issues 
+        });
+      }
+      next(error);
+    }
+  };
+};
+
 // ==================== TEACHER AUTHENTICATION ====================
 
-router.post('/login', validateRequest(TeacherLoginSchema), async (req, res) => {
+router.post('/login', validateRequest(TeacherLoginSchema), async (req: AuthRequest, res: Response) => {
   try {
     const { email, password } = req.body;
     
@@ -97,7 +115,7 @@ router.post('/login', validateRequest(TeacherLoginSchema), async (req, res) => {
 
 // ==================== TEACHER DASHBOARD ====================
 
-router.get('/dashboard', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/dashboard', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const dashboardData = await sheetsService.getTeacherDashboardData(req.user!.email);
     
@@ -114,7 +132,7 @@ router.get('/dashboard', authenticate, authorize('teacher'), async (req, res) =>
 
 // ==================== BATCH MANAGEMENT ====================
 
-router.get('/batches', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/batches', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
     
@@ -131,7 +149,7 @@ router.get('/batches', authenticate, authorize('teacher'), async (req, res) => {
   }
 });
 
-router.get('/batches/:batchName/students', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/batches/:batchName/students', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { batchName } = req.params;
     const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
@@ -141,7 +159,7 @@ router.get('/batches/:batchName/students', authenticate, authorize('teacher'), a
     }
     
     const batches = await sheetsService.getTeacherBatches(teacher.name);
-    const batch = batches.find(b => b.batchName === batchName);
+    const batch = batches.find((b: any) => b.batchName === batchName);
     
     if (!batch) {
       return res.status(404).json({ error: 'Batch not found' });
@@ -160,7 +178,7 @@ router.post('/add-student',
   authenticate, 
   authorize('teacher'), 
   validateRequest(AddStudentSchema),
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const studentData = req.body;
       const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
@@ -210,15 +228,8 @@ router.post('/add-student',
         100 // Initial attendance %
       ];
       
-      // Add to Google Sheets
-      await sheetsService.sheets.spreadsheets.values.append({
-        spreadsheetId: sheetsService.spreadsheetId,
-        range: 'Students!A:X',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [rowData]
-        }
-      });
+      // Add to Google Sheets using the service method
+      await sheetsService.addStudentRow(rowData);
       
       res.json({
         success: true,
@@ -231,7 +242,7 @@ router.post('/add-student',
     }
 });
 
-router.put('/students/:studentId', authenticate, authorize('teacher'), async (req, res) => {
+router.put('/students/:studentId', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { studentId } = req.params;
     const updates = req.body;
@@ -268,7 +279,7 @@ router.post('/attendance',
   authenticate, 
   authorize('teacher'), 
   validateRequest(AttendanceSchema),
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { batchName, date, students } = req.body;
       const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
@@ -284,8 +295,8 @@ router.post('/attendance',
         success: true,
         message: 'Attendance marked successfully',
         summary: {
-          present: students.filter(s => s.status === 'present').length,
-          absent: students.filter(s => s.status === 'absent').length,
+          present: students.filter((s: any) => s.status === 'present').length,
+          absent: students.filter((s: any) => s.status === 'absent').length,
           total: students.length
         }
       });
@@ -295,7 +306,7 @@ router.post('/attendance',
     }
 });
 
-router.get('/attendance/history', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/attendance/history', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { batchName, month, year } = req.query;
     const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
@@ -304,26 +315,16 @@ router.get('/attendance/history', authenticate, authorize('teacher'), async (req
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
-    // Get attendance logs from Logs sheet
-    const response = await sheetsService.sheets.spreadsheets.values.get({
-      spreadsheetId: sheetsService.spreadsheetId,
-      range: 'Logs!A:E'
-    });
-    
-    const rows = response.data.values || [];
-    const attendanceLogs = rows.filter((row, index) => {
-      if (index === 0) return false; // Skip header
-      return row[1] === 'Attendance' && row[3]?.includes(batchName);
-    });
+    // Get attendance logs using the service method
+    const attendanceLogs = await sheetsService.getAttendanceLogs(
+      batchName as string,
+      month as string,
+      year as string
+    );
     
     res.json({
       batchName,
-      logs: attendanceLogs.map(log => ({
-        timestamp: log[0],
-        studentId: log[2],
-        status: log[3],
-        date: log[4]
-      }))
+      logs: attendanceLogs
     });
   } catch (error) {
     console.error('Attendance history error:', error);
@@ -333,7 +334,7 @@ router.get('/attendance/history', authenticate, authorize('teacher'), async (req
 
 // ==================== CHANGE REQUESTS ====================
 
-router.get('/requests', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/requests', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
     
@@ -341,27 +342,18 @@ router.get('/requests', authenticate, authorize('teacher'), async (req, res) => 
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
-    // Get requests from Logs sheet
-    const response = await sheetsService.sheets.spreadsheets.values.get({
-      spreadsheetId: sheetsService.spreadsheetId,
-      range: 'Logs!A:E'
-    });
-    
-    const rows = response.data.values || [];
-    const requests = rows.filter((row, index) => {
-      if (index === 0) return false;
-      return row[1] === 'Change Request';
-    });
+    // Get requests using service method
+    const requests = await sheetsService.getChangeRequests();
     
     // Get student details for each request
-    const requestsWithDetails = await Promise.all(requests.map(async (request) => {
-      const student = await sheetsService.getStudentById(request[2]);
+    const requestsWithDetails = await Promise.all(requests.map(async (request: any) => {
+      const student = await sheetsService.getStudentById(request.studentId);
       return {
-        timestamp: request[0],
-        studentId: request[2],
+        timestamp: request.timestamp,
+        studentId: request.studentId,
         studentName: student?.name || 'Unknown',
-        requestType: request[3],
-        reason: request[4],
+        requestType: request.requestType,
+        reason: request.reason,
         currentBatch: student?.batchName,
         status: 'pending'
       };
@@ -374,7 +366,7 @@ router.get('/requests', authenticate, authorize('teacher'), async (req, res) => 
   }
 });
 
-router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), async (req, res) => {
+router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { requestId } = req.params;
     const { updates } = req.body; // New batch details
@@ -388,21 +380,13 @@ router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), 
         classDays: updates.classDays
       });
       
-      // Log approval
-      await sheetsService.sheets.spreadsheets.values.append({
-        spreadsheetId: sheetsService.spreadsheetId,
-        range: 'Logs!A:E',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[
-            new Date().toISOString(),
-            'Request Approved',
-            updates.studentId,
-            `Batch change approved by ${req.user!.email}`,
-            ''
-          ]]
-        }
-      });
+      // Log approval using service method
+      await sheetsService.logActivity(
+        'Request Approved',
+        updates.studentId,
+        `Batch change approved by ${req.user!.email}`,
+        ''
+      );
     }
     
     res.json({
@@ -417,7 +401,7 @@ router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), 
 
 // ==================== STATISTICS ====================
 
-router.get('/statistics', authenticate, authorize('teacher'), async (req, res) => {
+router.get('/statistics', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
     
@@ -430,19 +414,19 @@ router.get('/statistics', authenticate, authorize('teacher'), async (req, res) =
     // Calculate statistics
     const stats = {
       totalBatches: batches.length,
-      totalStudents: batches.reduce((sum, b) => sum + b.students.length, 0),
-      activeStudents: batches.reduce((sum, b) => 
-        sum + b.students.filter(s => s.status === 'Active').length, 0
+      totalStudents: batches.reduce((sum: number, b: any) => sum + b.students.length, 0),
+      activeStudents: batches.reduce((sum: number, b: any) => 
+        sum + b.students.filter((s: any) => s.status === 'Active').length, 0
       ),
-      onHoldStudents: batches.reduce((sum, b) => 
-        sum + b.students.filter(s => s.status === 'Hold').length, 0
+      onHoldStudents: batches.reduce((sum: number, b: any) => 
+        sum + b.students.filter((s: any) => s.status === 'Hold').length, 0
       ),
-      averageAttendance: batches.reduce((sum, b) => {
-        const batchAvg = b.students.reduce((s, st) => 
+      averageAttendance: batches.reduce((sum: number, b: any) => {
+        const batchAvg = b.students.reduce((s: number, st: any) => 
           s + (st.attendancePercentage || 0), 0) / b.students.length;
         return sum + batchAvg;
       }, 0) / batches.length,
-      batchDetails: batches.map(b => ({
+      batchDetails: batches.map((b: any) => ({
         name: b.batchName,
         studentCount: b.students.length,
         timing: `${b.timeFrom} - ${b.timeTill}`,

@@ -1,6 +1,6 @@
 // apps/backend/src/routes/student.routes.ts
 import { Router } from 'express';
-import { authenticate, authorize, validateRequest } from '../middleware/auth.middleware';
+import { authenticate, authorize, validateRequest } from './../middleware/auth_middleware';
 import { GoogleSheetsService } from '../services/googleSheets.service';
 import { z } from 'zod';
 
