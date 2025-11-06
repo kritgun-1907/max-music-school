@@ -1,6 +1,6 @@
 // apps/backend/src/routes/student.routes.ts
-import { Router } from 'express';
-import { authenticate, authorize, validateRequest } from './../middleware/auth_middleware';
+import { Router, Response } from 'express'; // Remove Request import
+import { authenticate, authorize, validateRequest, AuthRequest } from './../middleware/auth_middleware'; // Add AuthRequest
 import { GoogleSheetsService } from '../services/googleSheets.service';
 import { z } from 'zod';
 
@@ -31,36 +31,32 @@ const RatingSchema = z.object({
 
 // ==================== AUTHENTICATION ====================
 
-router.post('/login', validateRequest(LoginSchema), async (req, res) => {
+router.post('/login', validateRequest(LoginSchema), async (req: AuthRequest, res: Response) => {
   try {
     const { email, password } = req.body;
     
-    // Get student from your Google Sheet
     const student = await sheetsService.getStudentByEmail(email);
     
     if (!student) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Verify password (in your sheet it's stored as plain text - should be hashed in production)
     const isValid = await sheetsService.verifyPassword(password, student.passwordHash);
     
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    // Check if account is active
     if (student.status !== 'Active') {
       return res.status(403).json({ 
         error: `Account is ${student.status.toLowerCase()}`,
         status: student.status,
         message: student.status === 'Hold' 
-          ? `Account on hold. Please pay â‚¹${student.upcomingAmount} to continue.`
+          ? `Account on hold. Please pay ₹${student.upcomingAmount} to continue.`
           : 'Account is inactive. Please contact support.'
       });
     }
     
-    // Generate tokens
     const { authService } = require('../middleware/auth.middleware');
     const accessToken = authService.generateAccessToken({
       userId: student.id,
@@ -91,7 +87,7 @@ router.post('/login', validateRequest(LoginSchema), async (req, res) => {
 
 // ==================== DASHBOARD ====================
 
-router.get('/dashboard', authenticate, authorize('student'), async (req, res) => {
+router.get('/dashboard', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const dashboardData = await sheetsService.getStudentDashboardData(req.user!.userId);
     
@@ -108,7 +104,7 @@ router.get('/dashboard', authenticate, authorize('student'), async (req, res) =>
 
 // ==================== PROFILE ====================
 
-router.get('/profile', authenticate, authorize('student'), async (req, res) => {
+router.get('/profile', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const student = await sheetsService.getStudentById(req.user!.userId);
     
@@ -116,7 +112,6 @@ router.get('/profile', authenticate, authorize('student'), async (req, res) => {
       return res.status(404).json({ error: 'Student not found' });
     }
     
-    // Don't send password hash to frontend
     const { passwordHash, ...profile } = student;
     
     res.json(profile);
@@ -126,11 +121,10 @@ router.get('/profile', authenticate, authorize('student'), async (req, res) => {
   }
 });
 
-router.put('/profile', authenticate, authorize('student'), async (req, res) => {
+router.put('/profile', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const updates = req.body;
     
-    // Only allow updating certain fields
     const allowedFields = ['name', 'contact'];
     const filteredUpdates: any = {};
     
@@ -158,7 +152,7 @@ router.put('/profile', authenticate, authorize('student'), async (req, res) => {
 
 // ==================== SCHEDULE ====================
 
-router.get('/schedule', authenticate, authorize('student'), async (req, res) => {
+router.get('/schedule', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const student = await sheetsService.getStudentById(req.user!.userId);
     
@@ -166,7 +160,6 @@ router.get('/schedule', authenticate, authorize('student'), async (req, res) => 
       return res.status(404).json({ error: 'Student not found' });
     }
     
-    // Calculate schedule based on class days
     const schedule = {
       batchName: student.batchName,
       teacher: student.teacher,
@@ -193,7 +186,7 @@ router.get('/schedule', authenticate, authorize('student'), async (req, res) => 
 
 // ==================== ATTENDANCE ====================
 
-router.get('/attendance', authenticate, authorize('student'), async (req, res) => {
+router.get('/attendance', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const { month, year } = req.query;
     
@@ -216,7 +209,7 @@ router.post('/request-change',
   authenticate, 
   authorize('student'), 
   validateRequest(BatchChangeSchema),
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { newBatchName, newTiming, newDays, reason } = req.body;
       const student = await sheetsService.getStudentById(req.user!.userId);
@@ -225,7 +218,6 @@ router.post('/request-change',
         return res.status(404).json({ error: 'Student not found' });
       }
       
-      // Create change request
       const request = await sheetsService.createChangeRequest({
         studentId: req.user!.userId,
         type: 'Batch Change',
@@ -242,12 +234,12 @@ router.post('/request-change',
     } catch (error) {
       console.error('Change request error:', error);
       res.status(500).json({ error: 'Failed to submit change request' });
-  }
+    }
 });
 
 // ==================== PAYMENT INFO ====================
 
-router.get('/payment-info', authenticate, authorize('student'), async (req, res) => {
+router.get('/payment-info', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const student = await sheetsService.getStudentById(req.user!.userId);
     
@@ -263,7 +255,7 @@ router.get('/payment-info', authenticate, authorize('student'), async (req, res)
       upcomingClasses: student.upcomingClasses,
       accountStatus: student.status,
       message: student.status === 'Hold' 
-        ? `Your account is on hold. Please pay â‚¹${student.upcomingAmount} to continue your classes.`
+        ? `Your account is on hold. Please pay ₹${student.upcomingAmount} to continue your classes.`
         : null
     };
     
@@ -280,30 +272,22 @@ router.post('/rate-class',
   authenticate, 
   authorize('student'), 
   validateRequest(RatingSchema),
-  async (req, res) => {
+  async (req: AuthRequest, res: Response) => {
     try {
       const { date, rating, feedback } = req.body;
       
-      // Log the rating
-      await sheetsService.sheets.spreadsheets.values.append({
-        spreadsheetId: sheetsService.spreadsheetId,
-        range: 'Logs!A:E',
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values: [[
-            new Date().toISOString(),
-            'Class Rating',
-            req.user!.userId,
-            `Rating: ${rating}/5`,
-            feedback || ''
-          ]]
-        }
-      });
+      // Use the public method instead
+      await sheetsService.logActivity(
+        'Class Rating',
+        req.user!.userId,
+        `Rating: ${rating}/5`,
+        feedback || ''
+      );
       
       res.json({
         success: true,
         message: 'Thank you for your feedback!',
-        nextClassLink: 'https://zoom.us/j/...' // Generate based on batch
+        nextClassLink: 'https://zoom.us/j/...'
       });
     } catch (error) {
       console.error('Rating error:', error);
@@ -313,7 +297,7 @@ router.post('/rate-class',
 
 // ==================== UPCOMING CLASSES ====================
 
-router.get('/upcoming-classes', authenticate, authorize('student'), async (req, res) => {
+router.get('/upcoming-classes', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
     const student = await sheetsService.getStudentById(req.user!.userId);
     
@@ -321,7 +305,6 @@ router.get('/upcoming-classes', authenticate, authorize('student'), async (req, 
       return res.status(404).json({ error: 'Student not found' });
     }
     
-    // Calculate upcoming class dates
     const upcomingClasses = [];
     const classDays = student.classDays.split('-');
     const today = new Date();

@@ -27,7 +27,7 @@
     "redis": "^4.6.10",
     "socket.io": "^4.7.2",
     "winston": "^3.11.0",
-    "zod": "^4.1.12"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
