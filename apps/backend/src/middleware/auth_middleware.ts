@@ -181,7 +181,7 @@ export const validateRequest = (schema: z.ZodSchema) => {
       if (error instanceof z.ZodError) {
         res.status(400).json({
           error: 'Validation error',
-          details: error.errors
+          details: error.issues
         });
       } else {
         res.status(400).json({ error: 'Invalid request data' });

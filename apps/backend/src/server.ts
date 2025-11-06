@@ -13,9 +13,9 @@ import Redis from 'redis';
 dotenv.config();
 
 // Import routes
-import studentRoutes from './routes/student.routes';
-import teacherRoutes from './routes/teacher.routes';
-import { apiRateLimiter, securityHeaders } from './middleware/auth.middleware';
+import studentRoutes from './routes/student_routes';
+import teacherRoutes from './routes/teacher_routes';
+import { apiRateLimiter, securityHeaders } from './middleware/auth_middleware';
 
 // Initialize Express app
 const app = express();
