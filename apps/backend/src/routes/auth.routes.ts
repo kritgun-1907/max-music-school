@@ -1,10 +1,10 @@
 // apps/backend/src/routes/auth.routes.ts
 import express, { Request, Response } from 'express';
 import jwt, { SignOptions } from 'jsonwebtoken';
-import { GoogleSheetsService } from '../services/googleSheets.service';
+import { googleSheetsService} from '../services/googleSheets.service';
 
 const router = express.Router();
-const sheetsService = new GoogleSheetsService();
+// const sheetsService = new GoogleSheetsService();
 
 interface LoginRequest {
   email: string;
@@ -54,9 +54,9 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
     // Find user based on role
     let user;
     if (role === 'student') {
-      user = await sheetsService.getStudentByEmail(email);
+      user = await googleSheetsService.getStudentByEmail(email);
     } else {
-      user = await sheetsService.getTeacherByEmail(email);
+      user = await googleSheetsService.getTeacherByEmail(email);
     }
 
     if (!user) {
@@ -64,7 +64,7 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
     }
 
     // Verify password
-    const isPasswordValid = await sheetsService.verifyPassword(password, user.passwordHash);
+    const isPasswordValid = await googleSheetsService.verifyPassword(password, user.passwordHash);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -82,10 +82,10 @@ router.post('/login', async (req: Request<{}, {}, LoginRequest>, res: Response) 
     const refreshToken = generateRefreshToken(tokenPayload);
 
     // Store refresh token
-    await sheetsService.storeRefreshToken(tokenPayload.userId, refreshToken);
+    await googleSheetsService.storeRefreshToken(tokenPayload.userId, refreshToken);
 
     // Log the login activity
-    await sheetsService.logActivity(
+    await googleSheetsService.logActivity(
       'Login',
       tokenPayload.userId,
       `${role} logged in`,
@@ -128,7 +128,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
     const decoded = jwt.verify(refreshToken, secret) as TokenPayload;
 
     // Verify refresh token is stored
-    const isValid = await sheetsService.verifyRefreshToken(decoded.userId, refreshToken);
+    const isValid = await googleSheetsService.verifyRefreshToken(decoded.userId, refreshToken);
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid refresh token' });
@@ -145,7 +145,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
     const newRefreshToken = generateRefreshToken(tokenPayload);
 
     // Store new refresh token
-    await sheetsService.storeRefreshToken(decoded.userId, newRefreshToken);
+    await googleSheetsService.storeRefreshToken(decoded.userId, newRefreshToken);
 
     res.json({
       accessToken: newAccessToken,
@@ -168,10 +168,10 @@ router.post('/logout', async (req: Request, res: Response) => {
 
     if (userId) {
       // Remove refresh token
-      await sheetsService.removeRefreshToken(userId);
+      await googleSheetsService.removeRefreshToken(userId);
       
       // Log the logout activity
-      await sheetsService.logActivity(
+      await googleSheetsService.logActivity(
         'Logout',
         userId,
         'User logged out',

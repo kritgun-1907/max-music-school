@@ -1,11 +1,12 @@
 // apps/backend/src/routes/teacher.routes.ts
 import { Router, Response } from 'express';
 import { authenticate, authorize, AuthRequest } from './../middleware/auth_middleware';
-import { GoogleSheetsService } from '../services/googleSheets.service';
+import { googleSheetsService} from '../services/googleSheets.service';
 import { z } from 'zod';
+import { authService } from '../middleware/auth_middleware';
 
 const router = Router();
-const sheetsService = new GoogleSheetsService();
+// const sheetsService = new GoogleSheetsService();
 
 // Validation Schemas
 const TeacherLoginSchema = z.object({
@@ -64,14 +65,14 @@ router.post('/login', validateRequest(TeacherLoginSchema), async (req: AuthReque
   try {
     const { email, password } = req.body;
     
-    const teacher = await sheetsService.getTeacherByEmail(email);
+    const teacher = await googleSheetsService.getTeacherByEmail(email);
     
     if (!teacher) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
     // Verify password
-    const isValid = await sheetsService.verifyPassword(password, teacher.passwordHash);
+    const isValid = await googleSheetsService.verifyPassword(password, teacher.passwordHash);
     
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -85,7 +86,6 @@ router.post('/login', validateRequest(TeacherLoginSchema), async (req: AuthReque
     }
     
     // Generate tokens
-    const { authService } = require('../middleware/auth.middleware');
     const accessToken = authService.generateAccessToken({
       userId: teacher.email, // Using email as ID for teachers
       email: teacher.email,
@@ -93,7 +93,7 @@ router.post('/login', validateRequest(TeacherLoginSchema), async (req: AuthReque
     });
     
     const refreshToken = authService.generateRefreshToken(teacher.email);
-    await sheetsService.storeRefreshToken(teacher.email, refreshToken);
+    await googleSheetsService.storeRefreshToken(teacher.email, refreshToken);
     
     res.json({
       success: true,
@@ -117,7 +117,7 @@ router.post('/login', validateRequest(TeacherLoginSchema), async (req: AuthReque
 
 router.get('/dashboard', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
-    const dashboardData = await sheetsService.getTeacherDashboardData(req.user!.email);
+    const dashboardData = await googleSheetsService.getTeacherDashboardData(req.user!.email);
     
     if (!dashboardData) {
       return res.status(404).json({ error: 'Teacher not found' });
@@ -134,13 +134,13 @@ router.get('/dashboard', authenticate, authorize('teacher'), async (req: AuthReq
 
 router.get('/batches', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
-    const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+    const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
     
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
-    const batches = await sheetsService.getTeacherBatches(teacher.name);
+    const batches = await googleSheetsService.getTeacherBatches(teacher.name);
     
     res.json(batches);
   } catch (error) {
@@ -152,13 +152,13 @@ router.get('/batches', authenticate, authorize('teacher'), async (req: AuthReque
 router.get('/batches/:batchName/students', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { batchName } = req.params;
-    const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+    const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
     
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
-    const batches = await sheetsService.getTeacherBatches(teacher.name);
+    const batches = await googleSheetsService.getTeacherBatches(teacher.name);
     const batch = batches.find((b: any) => b.batchName === batchName);
     
     if (!batch) {
@@ -181,7 +181,7 @@ router.post('/add-student',
   async (req: AuthRequest, res: Response) => {
     try {
       const studentData = req.body;
-      const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+      const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
       
       if (!teacher) {
         return res.status(404).json({ error: 'Teacher not found' });
@@ -229,7 +229,7 @@ router.post('/add-student',
       ];
       
       // Add to Google Sheets using the service method
-      await sheetsService.addStudentRow(rowData);
+      await googleSheetsService.addStudentRow(rowData);
       
       res.json({
         success: true,
@@ -260,7 +260,7 @@ router.put('/students/:studentId', authenticate, authorize('teacher'), async (re
       }
     }
     
-    const updatedStudent = await sheetsService.updateStudentData(studentId, filteredUpdates);
+    const updatedStudent = await googleSheetsService.updateStudentData(studentId, filteredUpdates);
     
     res.json({
       success: true,
@@ -282,14 +282,14 @@ router.post('/attendance',
   async (req: AuthRequest, res: Response) => {
     try {
       const { batchName, date, students } = req.body;
-      const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+      const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
       
       if (!teacher) {
         return res.status(404).json({ error: 'Teacher not found' });
       }
       
       // Mark attendance
-      await sheetsService.markAttendance(batchName, date, students);
+      await googleSheetsService.markAttendance(batchName, date, students);
       
       res.json({
         success: true,
@@ -309,14 +309,14 @@ router.post('/attendance',
 router.get('/attendance/history', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
     const { batchName, month, year } = req.query;
-    const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+    const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
     
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
     // Get attendance logs using the service method
-    const attendanceLogs = await sheetsService.getAttendanceLogs(
+    const attendanceLogs = await googleSheetsService.getAttendanceLogs(
       batchName as string,
       month as string,
       year as string
@@ -336,18 +336,18 @@ router.get('/attendance/history', authenticate, authorize('teacher'), async (req
 
 router.get('/requests', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
-    const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+    const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
     
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
     // Get requests using service method
-    const requests = await sheetsService.getChangeRequests();
+    const requests = await googleSheetsService.getChangeRequests();
     
     // Get student details for each request
     const requestsWithDetails = await Promise.all(requests.map(async (request: any) => {
-      const student = await sheetsService.getStudentById(request.studentId);
+      const student = await googleSheetsService.getStudentById(request.studentId);
       return {
         timestamp: request.timestamp,
         studentId: request.studentId,
@@ -373,7 +373,7 @@ router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), 
     
     // Update student data
     if (updates && updates.studentId) {
-      await sheetsService.updateStudentData(updates.studentId, {
+      await googleSheetsService.updateStudentData(updates.studentId, {
         batchName: updates.batchName,
         timeFrom: updates.timeFrom,
         timeTill: updates.timeTill,
@@ -381,7 +381,7 @@ router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), 
       });
       
       // Log approval using service method
-      await sheetsService.logActivity(
+      await googleSheetsService.logActivity(
         'Request Approved',
         updates.studentId,
         `Batch change approved by ${req.user!.email}`,
@@ -403,13 +403,13 @@ router.post('/requests/:requestId/approve', authenticate, authorize('teacher'), 
 
 router.get('/statistics', authenticate, authorize('teacher'), async (req: AuthRequest, res: Response) => {
   try {
-    const teacher = await sheetsService.getTeacherByEmail(req.user!.email);
+    const teacher = await googleSheetsService.getTeacherByEmail(req.user!.email);
     
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
     
-    const batches = await sheetsService.getTeacherBatches(teacher.name);
+    const batches = await googleSheetsService.getTeacherBatches(teacher.name);
     
     // Calculate statistics
     const stats = {

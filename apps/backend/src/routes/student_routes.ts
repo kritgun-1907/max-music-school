@@ -1,11 +1,12 @@
 // apps/backend/src/routes/student.routes.ts
 import { Router, Response } from 'express'; // Remove Request import
 import { authenticate, authorize, validateRequest, AuthRequest } from './../middleware/auth_middleware'; // Add AuthRequest
-import { GoogleSheetsService } from '../services/googleSheets.service';
+import { googleSheetsService} from '../services/googleSheets.service';
 import { z } from 'zod';
+import { authService } from '../middleware/auth_middleware';
 
 const router = Router();
-const sheetsService = new GoogleSheetsService();
+// const sheetsService = new GoogleSheetsService();
 
 // Validation Schemas
 const LoginSchema = z.object({
@@ -35,13 +36,13 @@ router.post('/login', validateRequest(LoginSchema), async (req: AuthRequest, res
   try {
     const { email, password } = req.body;
     
-    const student = await sheetsService.getStudentByEmail(email);
+    const student = await googleSheetsService.getStudentByEmail(email);
     
     if (!student) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
-    const isValid = await sheetsService.verifyPassword(password, student.passwordHash);
+    const isValid = await googleSheetsService.verifyPassword(password, student.passwordHash);
     
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -57,7 +58,6 @@ router.post('/login', validateRequest(LoginSchema), async (req: AuthRequest, res
       });
     }
     
-    const { authService } = require('../middleware/auth.middleware');
     const accessToken = authService.generateAccessToken({
       userId: student.id,
       email: student.email,
@@ -65,7 +65,7 @@ router.post('/login', validateRequest(LoginSchema), async (req: AuthRequest, res
     });
     
     const refreshToken = authService.generateRefreshToken(student.id);
-    await sheetsService.storeRefreshToken(student.id, refreshToken);
+    await googleSheetsService.storeRefreshToken(student.id, refreshToken);
     
     res.json({
       success: true,
@@ -89,7 +89,7 @@ router.post('/login', validateRequest(LoginSchema), async (req: AuthRequest, res
 
 router.get('/dashboard', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
-    const dashboardData = await sheetsService.getStudentDashboardData(req.user!.userId);
+    const dashboardData = await googleSheetsService.getStudentDashboardData(req.user!.userId);
     
     if (!dashboardData) {
       return res.status(404).json({ error: 'Student not found' });
@@ -106,7 +106,7 @@ router.get('/dashboard', authenticate, authorize('student'), async (req: AuthReq
 
 router.get('/profile', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
-    const student = await sheetsService.getStudentById(req.user!.userId);
+    const student = await googleSheetsService.getStudentById(req.user!.userId);
     
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
@@ -134,7 +134,7 @@ router.put('/profile', authenticate, authorize('student'), async (req: AuthReque
       }
     }
     
-    const updatedStudent = await sheetsService.updateStudentData(
+    const updatedStudent = await googleSheetsService.updateStudentData(
       req.user!.userId, 
       filteredUpdates
     );
@@ -154,7 +154,7 @@ router.put('/profile', authenticate, authorize('student'), async (req: AuthReque
 
 router.get('/schedule', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
-    const student = await sheetsService.getStudentById(req.user!.userId);
+    const student = await googleSheetsService.getStudentById(req.user!.userId);
     
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
@@ -190,7 +190,7 @@ router.get('/attendance', authenticate, authorize('student'), async (req: AuthRe
   try {
     const { month, year } = req.query;
     
-    const attendance = await sheetsService.getStudentAttendance(
+    const attendance = await googleSheetsService.getStudentAttendance(
       req.user!.userId,
       month ? parseInt(month as string) : undefined,
       year ? parseInt(year as string) : undefined
@@ -212,13 +212,13 @@ router.post('/request-change',
   async (req: AuthRequest, res: Response) => {
     try {
       const { newBatchName, newTiming, newDays, reason } = req.body;
-      const student = await sheetsService.getStudentById(req.user!.userId);
+      const student = await googleSheetsService.getStudentById(req.user!.userId);
       
       if (!student) {
         return res.status(404).json({ error: 'Student not found' });
       }
       
-      const request = await sheetsService.createChangeRequest({
+      const request = await googleSheetsService.createChangeRequest({
         studentId: req.user!.userId,
         type: 'Batch Change',
         oldValue: `${student.batchName} (${student.timeFrom}-${student.timeTill})`,
@@ -241,7 +241,7 @@ router.post('/request-change',
 
 router.get('/payment-info', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
-    const student = await sheetsService.getStudentById(req.user!.userId);
+    const student = await googleSheetsService.getStudentById(req.user!.userId);
     
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
@@ -277,7 +277,7 @@ router.post('/rate-class',
       const { date, rating, feedback } = req.body;
       
       // Use the public method instead
-      await sheetsService.logActivity(
+      await googleSheetsService.logActivity(
         'Class Rating',
         req.user!.userId,
         `Rating: ${rating}/5`,
@@ -299,7 +299,7 @@ router.post('/rate-class',
 
 router.get('/upcoming-classes', authenticate, authorize('student'), async (req: AuthRequest, res: Response) => {
   try {
-    const student = await sheetsService.getStudentById(req.user!.userId);
+    const student = await googleSheetsService.getStudentById(req.user!.userId);
     
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
