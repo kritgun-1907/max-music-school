@@ -12,7 +12,7 @@ import {
   LogOut,
   CheckCircle,
   XCircle,
-//   Guitar,
+  Music2 as Guitar,
   Gauge,
   BookOpen,
 } from 'lucide-react';
